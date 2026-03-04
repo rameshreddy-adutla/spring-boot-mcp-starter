@@ -7,9 +7,10 @@ on:
     types: [submitted]
   check_suite:
     types: [completed]
+concurrency:
+  group: pr-merge-helper-${{ github.ref }}
+  cancel-in-progress: true
 
-
-concurrency:n  group: pr-merge-helper-${{ github.ref }}n  cancel-in-progress: truen
 permissions:
   pull-requests: write
   checks: read
