@@ -7,9 +7,10 @@ on:
     types: [opened]
   issues:
     types: [opened]
+concurrency:
+  group: welcome-bot-${{ github.ref }}
+  cancel-in-progress: true
 
-
-concurrency:n  group: welcome-bot-${{ github.ref }}n  cancel-in-progress: truen
 permissions:
   issues: write
   pull-requests: write
