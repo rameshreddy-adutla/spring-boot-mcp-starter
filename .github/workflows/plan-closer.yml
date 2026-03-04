@@ -1,0 +1,101 @@
+# 🎯 Plan Closer
+# Closes parent issue when all sub-issues are done
+name: "🎯 Plan Closer"
+
+on:
+  issues:
+    types: [closed]
+
+permissions:
+  issues: write
+
+jobs:
+  close-parent:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            const issue = context.payload.issue;
+            const body = issue.body || '';
+            const labels = issue.labels.map(l => l.name);
+
+            // Check if this is a sub-issue
+            if (!labels.includes('sub-issue')) {
+              console.log('Not a sub-issue, skipping');
+              return;
+            }
+
+            // Find parent issue number from body or title
+            const parentMatch = body.match(/Sub-issue of #(\d+)/) ||
+                               issue.title.match(/^\[(\d+)\]/);
+            if (!parentMatch) {
+              console.log('No parent issue reference found');
+              return;
+            }
+
+            const parentNumber = parseInt(parentMatch[1]);
+            console.log(`Found parent issue #${parentNumber}`);
+
+            // Get parent issue
+            const parent = await github.rest.issues.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: parentNumber,
+            });
+
+            if (parent.data.state === 'closed') {
+              console.log('Parent already closed');
+              return;
+            }
+
+            // Find all sub-issues of this parent
+            const allIssues = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              labels: 'sub-issue',
+              state: 'all',
+              per_page: 100,
+            });
+
+            const siblingIssues = allIssues.data.filter(i => {
+              const b = i.body || '';
+              const t = i.title || '';
+              return b.includes(`Sub-issue of #${parentNumber}`) ||
+                     t.startsWith(`[${parentNumber}]`);
+            });
+
+            const openSiblings = siblingIssues.filter(i => i.state === 'open');
+
+            console.log(`Sub-issues: ${siblingIssues.length} total, ${openSiblings.length} still open`);
+
+            if (openSiblings.length === 0 && siblingIssues.length > 0) {
+              // All sub-issues closed — close parent!
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: parentNumber,
+                body: `🎯 **All sub-issues completed!**\n\n${siblingIssues.map(i => `- ✅ #${i.number} ${i.title}`).join('\n')}\n\n---\n*Auto-closed by Plan Closer 🤖*`,
+              });
+
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: parentNumber,
+                state: 'closed',
+                state_reason: 'completed',
+              });
+
+              console.log(`Closed parent issue #${parentNumber}`);
+            } else {
+              // Update parent with progress
+              const total = siblingIssues.length;
+              const done = total - openSiblings.length;
+
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: parentNumber,
+                body: `📊 **Progress: ${done}/${total} sub-issues completed** (${Math.round(done/total*100)}%)\n\n✅ Closed: #${issue.number} — ${issue.title}\n\n🔄 Remaining:\n${openSiblings.map(i => `- #${i.number} ${i.title}`).join('\n')}`,
+              });
+            }
