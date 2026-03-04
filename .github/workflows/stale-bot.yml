@@ -6,9 +6,10 @@ on:
   schedule:
     - cron: '0 9 * * 1' # Every Monday at 9am UTC
   workflow_dispatch: # Allow manual trigger
+concurrency:
+  group: stale-bot-${{ github.ref }}
+  cancel-in-progress: true
 
-
-concurrency:n  group: stale-bot-${{ github.ref }}n  cancel-in-progress: truen
 permissions:
   issues: write
   pull-requests: write
