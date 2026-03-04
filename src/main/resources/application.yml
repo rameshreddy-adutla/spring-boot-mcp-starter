@@ -1,0 +1,5 @@
+mcp:
+  server:
+    name: spring-boot-mcp-server
+    version: 0.1.0
+    transport: stdio
