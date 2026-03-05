@@ -1,6 +1,6 @@
 # 🚀 Issue Pipeline
 # Triggered when maintainer adds "ready" label
-# Generates plan → creates branch → opens draft PR — all in one go
+# Generates plan → creates branch with scaffold → opens draft PR
 name: "🚀 Issue Pipeline"
 
 on:
@@ -39,7 +39,7 @@ jobs:
             const isBug = labels.includes('bug');
             const isTranslation = labels.includes('translation');
 
-            let plan = `## 📋 Implementation Plan\n\n`;
+            let plan = `## �� Implementation Plan\n\n`;
 
             if (isTranslation) {
               const langMatch = title.match(/[\u{1F1E0}-\u{1F1FF}]{2}\s*(?:Add\s+)?(\w+)/u) || title.match(/(?:Add\s+)?(\w+)\s+language/i);
@@ -117,7 +117,24 @@ jobs:
             }
 
             // ──────────────────────────────────────
-            // Step 3: Create draft PR
+            // Step 3: Create scaffold commit so PR can be opened
+            // ──────────────────────────────────────
+            const scaffoldContent = Buffer.from(
+              `# Issue #${issue.number}\n\n${title}\n\nSee implementation plan in the linked issue.\n`
+            ).toString('base64');
+
+            await github.rest.repos.createOrUpdateFileContents({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              path: `.github/issues/${issue.number}.md`,
+              message: `chore: scaffold for #${issue.number} — ${title}`,
+              content: scaffoldContent,
+              branch: branchName,
+            });
+            console.log(`✅ Scaffold commit created`);
+
+            // ──────────────────────────────────────
+            // Step 4: Create draft PR
             // ──────────────────────────────────────
             let prBody = `## Closes #${issue.number}\n\n`;
             prBody += `### What this PR does\n\n`;
@@ -141,9 +158,8 @@ jobs:
             console.log(`✅ Draft PR #${pr.data.number} created`);
 
             // ──────────────────────────────────────
-            // Step 4: Update issue — add in-progress, remove ready
+            // Step 5: Update issue labels
             // ──────────────────────────────────────
-            // Ensure in-progress label exists
             try {
               await github.rest.issues.getLabel({ owner: context.repo.owner, repo: context.repo.repo, name: 'in-progress' });
             } catch {
@@ -164,12 +180,11 @@ jobs:
                 issue_number: issue.number,
                 name: 'ready',
               });
-            } catch { /* label might not exist */ }
+            } catch { /* ok */ }
 
-            // Comment with PR link
             await github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: issue.number,
-              body: `🚀 **Pipeline complete!**\n\n- **Branch:** \`${branchName}\`\n- **Draft PR:** #${pr.data.number}\n\nPush your changes to the branch, then mark the PR as Ready for Review.`,
+              body: `🚀 **Pipeline complete!**\n\n- **Branch:** \`${branchName}\`\n- **Draft PR:** #${pr.data.number}\n\nPush changes to the branch, then mark the PR as Ready for Review.`,
             });
