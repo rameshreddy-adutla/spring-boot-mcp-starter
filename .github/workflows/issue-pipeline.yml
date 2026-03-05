@@ -1,0 +1,175 @@
+# 🚀 Issue Pipeline
+# Triggered when maintainer adds "ready" label
+# Generates plan → creates branch → opens draft PR — all in one go
+name: "🚀 Issue Pipeline"
+
+on:
+  issues:
+    types: [labeled]
+
+concurrency:
+  group: issue-pipeline-${{ github.event.issue.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+jobs:
+  pipeline:
+    if: github.event.label.name == 'ready'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run pipeline
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const issue = context.payload.issue;
+            const labels = issue.labels.map(l => l.name);
+            const title = issue.title;
+            const body = issue.body || '';
+
+            // ──────────────────────────────────────
+            // Step 1: Generate implementation plan
+            // ──────────────────────────────────────
+            const isFeature = labels.includes('enhancement') || title.toLowerCase().includes('add');
+            const isBug = labels.includes('bug');
+            const isTranslation = labels.includes('translation');
+
+            let plan = `## 📋 Implementation Plan\n\n`;
+
+            if (isTranslation) {
+              const langMatch = title.match(/[\u{1F1E0}-\u{1F1FF}]{2}\s*(?:Add\s+)?(\w+)/u) || title.match(/(?:Add\s+)?(\w+)\s+language/i);
+              const lang = langMatch ? langMatch[1] : 'new';
+              const code = lang.toLowerCase().slice(0, 2);
+              plan += `**Type:** Translation (${lang})\n\n`;
+              plan += `### Checklist\n`;
+              plan += `- [ ] Create \`messages/${code}.json\` translation file\n`;
+              plan += `- [ ] Add translated lesson content in \`content/lessons/${code}/\`\n`;
+              plan += `- [ ] Register locale in \`src/i18n/request.ts\`\n`;
+              plan += `- [ ] Add flag/option to language selector\n`;
+              plan += `- [ ] Update README with new language\n`;
+            } else if (isBug) {
+              plan += `**Type:** Bug fix\n\n`;
+              plan += `### Checklist\n`;
+              plan += `- [ ] Reproduce the issue\n`;
+              plan += `- [ ] Write failing test\n`;
+              plan += `- [ ] Implement fix\n`;
+              plan += `- [ ] Verify fix and check regressions\n`;
+            } else if (isFeature) {
+              plan += `**Type:** Feature\n\n`;
+              plan += `### Checklist\n`;
+              plan += `- [ ] Implement core logic\n`;
+              plan += `- [ ] Add tests\n`;
+              plan += `- [ ] Accessibility check\n`;
+              plan += `- [ ] Update documentation\n`;
+            } else {
+              plan += `### Checklist\n`;
+              plan += `- [ ] Implement changes\n`;
+              plan += `- [ ] Add tests\n`;
+              plan += `- [ ] Update documentation\n`;
+            }
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: issue.number,
+              body: plan,
+            });
+            console.log(`✅ Plan posted on issue #${issue.number}`);
+
+            // ──────────────────────────────────────
+            // Step 2: Create feature branch
+            // ──────────────────────────────────────
+            const slug = title
+              .toLowerCase()
+              .replace(/[^\w\s-]/g, '')
+              .replace(/\s+/g, '-')
+              .slice(0, 50)
+              .replace(/-+$/, '');
+            const branchName = `issue-${issue.number}/${slug}`;
+
+            const repo = await github.rest.repos.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+            });
+            const defaultBranch = repo.data.default_branch;
+
+            const mainRef = await github.rest.git.getRef({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              ref: `heads/${defaultBranch}`,
+            });
+
+            try {
+              await github.rest.git.createRef({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                ref: `refs/heads/${branchName}`,
+                sha: mainRef.data.object.sha,
+              });
+              console.log(`✅ Branch created: ${branchName}`);
+            } catch (e) {
+              console.log(`⚠️ Branch may already exist: ${e.message}`);
+            }
+
+            // ──────────────────────────────────────
+            // Step 3: Create draft PR
+            // ──────────────────────────────────────
+            let prBody = `## Closes #${issue.number}\n\n`;
+            prBody += `### What this PR does\n\n`;
+            prBody += `${title}\n\n`;
+            prBody += `### Changes\n\n`;
+            prBody += `- [ ] Implementation complete\n`;
+            prBody += `- [ ] Tests added\n`;
+            prBody += `- [ ] Docs updated\n\n`;
+            prBody += `---\n`;
+            prBody += `*🤖 Auto-created by Issue Pipeline. Push to \`${branchName}\`, then mark Ready for Review.*`;
+
+            const pr = await github.rest.pulls.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `#${issue.number} ${title}`,
+              body: prBody,
+              head: branchName,
+              base: defaultBranch,
+              draft: true,
+            });
+            console.log(`✅ Draft PR #${pr.data.number} created`);
+
+            // ──────────────────────────────────────
+            // Step 4: Update issue — add in-progress, remove ready
+            // ──────────────────────────────────────
+            // Ensure in-progress label exists
+            try {
+              await github.rest.issues.getLabel({ owner: context.repo.owner, repo: context.repo.repo, name: 'in-progress' });
+            } catch {
+              await github.rest.issues.createLabel({ owner: context.repo.owner, repo: context.repo.repo, name: 'in-progress', color: 'fbca04' });
+            }
+
+            await github.rest.issues.addLabels({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: issue.number,
+              labels: ['in-progress'],
+            });
+
+            try {
+              await github.rest.issues.removeLabel({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                name: 'ready',
+              });
+            } catch { /* label might not exist */ }
+
+            // Comment with PR link
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: issue.number,
+              body: `🚀 **Pipeline complete!**\n\n- **Branch:** \`${branchName}\`\n- **Draft PR:** #${pr.data.number}\n\nPush your changes to the branch, then mark the PR as Ready for Review.`,
+            });
