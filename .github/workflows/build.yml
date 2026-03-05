@@ -3,6 +3,11 @@ name: Build
 on:
   push:
     branches: [ main ]
+    paths-ignore:
+      - '.github/workflows/**'
+      - '*.md'
+      - 'LICENSE'
+      - '.gitignore' 
   pull_request:
     branches: [ main ]
 concurrency:
